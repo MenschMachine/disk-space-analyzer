@@ -37,12 +37,12 @@ nfpms:
       - deb
     maintainer: "Michael Lahr"
     description: "Fast disk space analyzer CLI for macOS and Linux."
-    homepage: "https://github.com/mlahr/disk-space-analyzer"
+    homepage: "https://github.com/MenschMachine/disk-space-analyzer"
     section: utils
     priority: optional
     bindir: /usr/bin
 
 release:
   github:
-    owner: mlahr
+    owner: MenschMachine
     name: disk-space-analyzer

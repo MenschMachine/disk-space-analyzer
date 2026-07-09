@@ -4,7 +4,7 @@ config.yaml
 .env.*
 
 # Build outputs.
-upag
+dsa
 bin/
 dist/
 
@@ -19,7 +19,6 @@ coverage.html
 *.pid
 *.sqlite
 *.sqlite3
-upag.sqlite-journal
 
 # Temporary files.
 tmp/

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -42,7 +43,12 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	cfg, err := parseArgs(args)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			printUsage(stdout)
+			return 0
+		}
 		fmt.Fprintln(stderr, err)
+		fmt.Fprintln(stderr, "Run dsa --help for usage.")
 		return 2
 	}
 
@@ -121,6 +127,21 @@ func parseArgs(args []string) (cliConfig, error) {
 	}
 	cfg.excludes = excludes
 	return cfg, nil
+}
+
+func printUsage(w io.Writer) {
+	fmt.Fprintln(w, "Usage: dsa [flags] [path]")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Find the largest directories under path. If path is omitted, dsa scans the current working directory.")
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "Flags:")
+	fmt.Fprintln(w, "  --format table|json           output format (default table)")
+	fmt.Fprintf(w, "  --limit N                     maximum directories to show (default %d)\n", defaultLimit)
+	fmt.Fprintln(w, "  --size-mode recursive|top-level")
+	fmt.Fprintln(w, "                                directory size aggregation mode (default recursive)")
+	fmt.Fprintln(w, "  --exclude GLOB                exclude paths matching glob; may be repeated")
+	fmt.Fprintln(w, "  --workers N                   scanner workers; defaults to logical CPUs")
+	fmt.Fprintln(w, "  --help                        show this help")
 }
 
 func writeTable(w io.Writer, result scan.Result) {

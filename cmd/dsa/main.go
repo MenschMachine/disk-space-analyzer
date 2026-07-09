@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"text/tabwriter"
+	"time"
 
 	"github.com/mlahr/disk-space-analyzer/internal/scan"
 )
@@ -33,6 +35,7 @@ type cliConfig struct {
 	sizeMode string
 	excludes []string
 	workers  int
+	stream   bool
 	path     string
 }
 
@@ -58,12 +61,36 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	result, err := scan.Scan(cfg.path, scan.Options{
+	options := scan.Options{
 		Limit:           cfg.limit,
 		SizeMode:        mode,
 		ExcludePatterns: cfg.excludes,
 		Workers:         cfg.workers,
-	})
+	}
+	var writeMu sync.Mutex
+	useColor, err := shouldUseColor(stdout)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+
+	if cfg.stream {
+		if cfg.format != "table" {
+			fmt.Fprintln(stderr, "--stream requires --format table")
+			return 2
+		}
+		options.ProgressEvery = 250 * time.Millisecond
+		options.Progress = func(snapshot scan.Snapshot) {
+			if snapshot.Done {
+				return
+			}
+			writeMu.Lock()
+			defer writeMu.Unlock()
+			writeLiveTable(stdout, snapshot, useColor)
+		}
+	}
+
+	result, err := scan.Scan(cfg.path, options)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -71,7 +98,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 	switch cfg.format {
 	case "table":
-		writeTable(stdout, result)
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		if cfg.stream {
+			clearScreen(stdout)
+		}
+		writeTable(stdout, result, useColor)
 	case "json":
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -103,8 +135,10 @@ func parseArgs(args []string) (cliConfig, error) {
 	fs.StringVar(&cfg.sizeMode, "size-mode", cfg.sizeMode, "directory size mode: recursive or top-level")
 	fs.Var(&excludes, "exclude", "glob pattern to exclude; may be repeated")
 	fs.IntVar(&cfg.workers, "workers", cfg.workers, "number of scanner workers; defaults to logical CPUs")
+	fs.BoolVar(&cfg.stream, "stream", cfg.stream, "continuously refresh the current top directories while scanning")
 
-	if err := fs.Parse(args); err != nil {
+	normalizedArgs := normalizeInterspersedFlags(args)
+	if err := fs.Parse(normalizedArgs); err != nil {
 		return cfg, err
 	}
 	if cfg.limit < 1 {
@@ -129,6 +163,44 @@ func parseArgs(args []string) (cliConfig, error) {
 	return cfg, nil
 }
 
+func normalizeInterspersedFlags(args []string) []string {
+	flags := make([]string, 0, len(args))
+	positionals := make([]string, 0, len(args))
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if arg == "--" {
+			positionals = append(positionals, args[i+1:]...)
+			break
+		}
+		if !strings.HasPrefix(arg, "-") || arg == "-" {
+			positionals = append(positionals, arg)
+			continue
+		}
+
+		flags = append(flags, arg)
+		if flagNeedsSeparateValue(arg) && i+1 < len(args) {
+			i++
+			flags = append(flags, args[i])
+		}
+	}
+
+	return append(flags, positionals...)
+}
+
+func flagNeedsSeparateValue(arg string) bool {
+	name := strings.TrimLeft(arg, "-")
+	if name == "help" || name == "h" || strings.Contains(name, "=") {
+		return false
+	}
+	switch name {
+	case "format", "limit", "size-mode", "exclude", "workers":
+		return true
+	default:
+		return false
+	}
+}
+
 func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "Usage: dsa [flags] [path]")
 	fmt.Fprintln(w)
@@ -140,20 +212,118 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --size-mode recursive|top-level")
 	fmt.Fprintln(w, "                                directory size aggregation mode (default recursive)")
 	fmt.Fprintln(w, "  --exclude GLOB                exclude paths matching glob; may be repeated")
+	fmt.Fprintln(w, "  --stream                      continuously refresh current top table while scanning")
 	fmt.Fprintln(w, "  --workers N                   scanner workers; defaults to logical CPUs")
 	fmt.Fprintln(w, "  --help                        show this help")
 }
 
-func writeTable(w io.Writer, result scan.Result) {
-	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "SIZE\tPERCENT\tPATH")
-	for _, entry := range result.Entries {
-		fmt.Fprintf(tw, "%s\t%.1f%%\t%s\n", humanSize(entry.Size), entry.Percent, displayPath(entry.Path, result.Root))
+func writeLiveTable(w io.Writer, snapshot scan.Snapshot, useColor bool) {
+	clearScreen(w)
+	state := "Scanning"
+	if snapshot.Done {
+		state = "Finalizing"
 	}
+	fmt.Fprintf(w, "%s: %s\n", colorize(state, ansiCyanBold, useColor), snapshot.Root)
+	fmt.Fprintf(w, "Mode: %s  Directories seen: %s  Known size: %s  Errors: %s\n\n",
+		colorize(string(snapshot.SizeMode), ansiDim, useColor),
+		colorize(fmt.Sprintf("%d", snapshot.DirectoriesScanned), ansiGreen, useColor),
+		colorize(humanSize(snapshot.Total), ansiGreen, useColor),
+		colorize(fmt.Sprintf("%d", len(snapshot.Errors)), errorColor(len(snapshot.Errors), useColor), useColor),
+	)
+	writeEntriesTable(w, snapshot.Root, snapshot.Entries, useColor)
+}
+
+func clearScreen(w io.Writer) {
+	fmt.Fprint(w, "\033[H\033[2J")
+}
+
+func writeTable(w io.Writer, result scan.Result, useColor bool) {
+	writeEntriesTable(w, result.Root, result.Entries, useColor)
 	if len(result.Errors) > 0 {
-		fmt.Fprintf(tw, "\nWARNINGS\t%d scan errors; use --format json for details\t\n", len(result.Errors))
+		tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+		fmt.Fprintf(tw, "\n%s\t%d scan errors; use --format json for details\t\n", colorize("WARNINGS", ansiYellowBold, useColor), len(result.Errors))
+		_ = tw.Flush()
+	}
+}
+
+func writeEntriesTable(w io.Writer, root string, entries []scan.Entry, useColor bool) {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(tw, "%s\t%s\t%s\n",
+		colorize("SIZE", ansiBold, useColor),
+		colorize("PERCENT", ansiBold, useColor),
+		colorize("PATH", ansiBold, useColor),
+	)
+	for idx, entry := range entries {
+		pathColor := ansiReset
+		if idx == 0 {
+			pathColor = ansiCyan
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\n",
+			colorize(humanSize(entry.Size), sizeColor(entry.Percent), useColor),
+			colorize(fmt.Sprintf("%.1f%%", entry.Percent), percentColor(entry.Percent), useColor),
+			colorize(displayPath(entry.Path, root), pathColor, useColor),
+		)
 	}
 	_ = tw.Flush()
+}
+
+const (
+	ansiReset      = "\033[0m"
+	ansiBold       = "\033[1m"
+	ansiDim        = "\033[2m"
+	ansiGreen      = "\033[32m"
+	ansiYellow     = "\033[33m"
+	ansiRed        = "\033[31m"
+	ansiCyan       = "\033[36m"
+	ansiCyanBold   = "\033[1;36m"
+	ansiYellowBold = "\033[1;33m"
+)
+
+func shouldUseColor(w io.Writer) (bool, error) {
+	if _, ok := os.LookupEnv("NO_COLOR"); ok {
+		return false, nil
+	}
+	file, ok := w.(*os.File)
+	if !ok {
+		return false, nil
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return false, err
+	}
+	return info.Mode()&os.ModeCharDevice != 0, nil
+}
+
+func colorize(value, color string, enabled bool) string {
+	if !enabled || color == "" || color == ansiReset {
+		return value
+	}
+	return color + value + ansiReset
+}
+
+func sizeColor(percent float64) string {
+	switch {
+	case percent >= 50:
+		return ansiRed
+	case percent >= 20:
+		return ansiYellow
+	default:
+		return ansiGreen
+	}
+}
+
+func percentColor(percent float64) string {
+	return sizeColor(percent)
+}
+
+func errorColor(errors int, useColor bool) string {
+	if !useColor {
+		return ""
+	}
+	if errors > 0 {
+		return ansiYellow
+	}
+	return ansiGreen
 }
 
 func displayPath(path, root string) string {

@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 type SizeMode string
@@ -23,6 +24,8 @@ type Options struct {
 	SizeMode        SizeMode
 	ExcludePatterns []string
 	Workers         int
+	Progress        func(Snapshot)
+	ProgressEvery   time.Duration
 }
 
 type Result struct {
@@ -31,6 +34,16 @@ type Result struct {
 	Total    int64       `json:"total"`
 	Entries  []Entry     `json:"entries"`
 	Errors   []ScanError `json:"errors"`
+}
+
+type Snapshot struct {
+	Root               string
+	SizeMode           SizeMode
+	Total              int64
+	Entries            []Entry
+	Errors             []ScanError
+	DirectoriesScanned int
+	Done               bool
 }
 
 type Entry struct {
@@ -107,6 +120,25 @@ func Scan(root string, opts Options) (Result, error) {
 	errs := make([]ScanError, 0)
 	tasks := make(chan task, workers*2)
 	var wg sync.WaitGroup
+	done := make(chan struct{})
+	if opts.Progress != nil {
+		every := opts.ProgressEvery
+		if every <= 0 {
+			every = 250 * time.Millisecond
+		}
+		go func() {
+			ticker := time.NewTicker(every)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					opts.Progress(snapshot(absRoot, mode, opts.Limit, nodes, &errs, false, &mu))
+				case <-done:
+					return
+				}
+			}
+		}()
+	}
 
 	worker := func() {
 		for t := range tasks {
@@ -123,10 +155,41 @@ func Scan(root string, opts Options) (Result, error) {
 	tasks <- task{path: absRoot}
 	wg.Wait()
 	close(tasks)
+	close(done)
 
-	total := computeTotals(nodes, absRoot)
-	entries := make([]Entry, 0, len(nodes))
-	for _, n := range nodes {
+	finalSnapshot := snapshot(absRoot, mode, opts.Limit, nodes, &errs, true, &mu)
+	if opts.Progress != nil {
+		opts.Progress(finalSnapshot)
+	}
+
+	return Result{
+		Root:     finalSnapshot.Root,
+		SizeMode: finalSnapshot.SizeMode,
+		Total:    finalSnapshot.Total,
+		Entries:  finalSnapshot.Entries,
+		Errors:   finalSnapshot.Errors,
+	}, nil
+}
+
+func snapshot(root string, mode SizeMode, limit int, nodes map[string]*node, errs *[]ScanError, done bool, mu *sync.Mutex) Snapshot {
+	mu.Lock()
+	nodeCopies := make(map[string]*node, len(nodes))
+	for path, n := range nodes {
+		children := append([]string(nil), n.children...)
+		nodeCopies[path] = &node{
+			path:       n.path,
+			parent:     n.parent,
+			directSize: n.directSize,
+			children:   children,
+		}
+	}
+	errCopies := make([]ScanError, len(*errs))
+	copy(errCopies, *errs)
+	mu.Unlock()
+
+	total := computeTotals(nodeCopies, root)
+	entries := make([]Entry, 0, len(nodeCopies))
+	for _, n := range nodeCopies {
 		size := n.totalSize
 		if mode == SizeModeTopLevel {
 			size = n.directSize
@@ -144,20 +207,22 @@ func Scan(root string, opts Options) (Result, error) {
 		}
 		return entries[i].Size > entries[j].Size
 	})
-	if len(entries) > opts.Limit {
-		entries = entries[:opts.Limit]
+	if len(entries) > limit {
+		entries = entries[:limit]
 	}
-	sort.Slice(errs, func(i, j int) bool {
-		return errs[i].Path < errs[j].Path
+	sort.Slice(errCopies, func(i, j int) bool {
+		return errCopies[i].Path < errCopies[j].Path
 	})
 
-	return Result{
-		Root:     absRoot,
-		SizeMode: mode,
-		Total:    total,
-		Entries:  entries,
-		Errors:   errs,
-	}, nil
+	return Snapshot{
+		Root:               root,
+		SizeMode:           mode,
+		Total:              total,
+		Entries:            entries,
+		Errors:             errCopies,
+		DirectoriesScanned: len(nodeCopies),
+		Done:               done,
+	}
 }
 
 func scanOne(t task, root string, matcher excludeMatcher, tasks chan<- task, wg *sync.WaitGroup, mu *sync.Mutex, nodes map[string]*node, errs *[]ScanError) {

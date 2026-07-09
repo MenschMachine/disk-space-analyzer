@@ -1,0 +1,48 @@
+version: 2
+
+project_name: dsa
+
+builds:
+  - id: dsa
+    main: ./cmd/dsa
+    binary: dsa
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+
+archives:
+  - id: tarball
+    ids:
+      - dsa
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+nfpms:
+  - id: deb
+    package_name: dsa
+    ids:
+      - dsa
+    formats:
+      - deb
+    maintainer: "Michael Lahr"
+    description: "Fast disk space analyzer CLI for macOS and Linux."
+    homepage: "https://github.com/mlahr/disk-space-analyzer"
+    section: utils
+    priority: optional
+    bindir: /usr/bin
+
+release:
+  github:
+    owner: mlahr
+    name: disk-space-analyzer

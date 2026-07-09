@@ -21,6 +21,21 @@ If `path` is omitted, `dsa` scans the current working directory.
 - `--cross-fs`: descend into directories on other filesystems. By default, `dsa` stays on the scanned root's filesystem.
 - `--stream`: continuously refresh the current top directories while scanning. Requires table output.
 - `--workers N`: scanner worker count. Defaults to logical CPUs.
+- `--version`: print the version and exit.
+
+## Install
+
+On Debian-based Linux systems, install the latest GitHub release with:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mlahr/disk-space-analyzer/main/install.sh | bash
+```
+
+The installer downloads the latest `.deb`, verifies it against the release `checksums.txt`, and installs it with `apt-get`.
+
+## Release
+
+Tagged releases use the same publishing flow as `upag`: pushing a `v*` tag runs GoReleaser in GitHub Actions, publishes a GitHub release, and attaches Linux `amd64` tarball, `.deb`, and checksum assets.
 
 ## Size Modes
 

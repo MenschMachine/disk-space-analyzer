@@ -18,6 +18,8 @@ import (
 
 const defaultLimit = 50
 
+var version = "dev"
+
 type multiFlag []string
 
 func (m *multiFlag) String() string {
@@ -45,6 +47,11 @@ func main() {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 1 && args[0] == "--version" {
+		fmt.Fprintf(stdout, "dsa %s\n", version)
+		return 0
+	}
+
 	cfg, err := parseArgs(args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -218,6 +225,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --cross-fs                    descend into directories on other filesystems")
 	fmt.Fprintln(w, "  --stream                      continuously refresh current top table while scanning")
 	fmt.Fprintln(w, "  --workers N                   scanner workers; defaults to logical CPUs")
+	fmt.Fprintln(w, "  --version                     show version")
 	fmt.Fprintln(w, "  --help                        show this help")
 }
 

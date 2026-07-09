@@ -4,7 +4,7 @@ config.yaml
 .env.*
 
 # Build outputs.
-dsa
+/dsa
 bin/
 dist/
 

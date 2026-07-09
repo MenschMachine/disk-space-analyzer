@@ -98,9 +98,9 @@ func TestDisplayPathWithBranchGradientUsesOneHueForBranch(t *testing.T) {
 
 	base := colorForTopLevelPath("node_modules")
 	got := displayPathWithBranchGradient(child, root, true)
-	want := colorize("node_modules", ansiRGB(shadeForDepth(base, 0)), true) +
+	want := colorize("node_modules", colorForDepth(base, 0), true) +
 		string(filepath.Separator) +
-		colorize(".cache", ansiRGB(shadeForDepth(base, 1)), true)
+		colorize(".cache", colorForDepth(base, 1), true)
 	if got != want {
 		t.Fatalf("display path = %q, want %q", got, want)
 	}
@@ -114,7 +114,7 @@ func TestDisplayPathWithBranchGradientUsesSamePrefixColorsForParentAndChild(t *t
 	parentDisplay := displayPathWithBranchGradient(parent, root, true)
 	childDisplay := displayPathWithBranchGradient(child, root, true)
 
-	if parentDisplay != colorize("node_modules", ansiRGB(shadeForDepth(colorForTopLevelPath("node_modules"), 0)), true) {
+	if parentDisplay != colorize("node_modules", colorForDepth(colorForTopLevelPath("node_modules"), 0), true) {
 		t.Fatalf("parent display = %q, want top-level branch color", parentDisplay)
 	}
 	wantPrefix := parentDisplay + string(filepath.Separator)
@@ -123,7 +123,7 @@ func TestDisplayPathWithBranchGradientUsesSamePrefixColorsForParentAndChild(t *t
 	}
 }
 
-func TestDisplayPathWithBranchGradientDarkensByDepth(t *testing.T) {
+func TestDisplayPathWithBranchGradientUsesNormalBranchColorForDescendants(t *testing.T) {
 	root := filepath.Join("tmp", "scan")
 	grandparent := filepath.Join(root, "src")
 	parent := filepath.Join(grandparent, "vendor")
@@ -131,11 +131,11 @@ func TestDisplayPathWithBranchGradientDarkensByDepth(t *testing.T) {
 
 	base := colorForTopLevelPath("src")
 	got := displayPathWithBranchGradient(child, root, true)
-	want := colorize("src", ansiRGB(shadeForDepth(base, 0)), true) +
+	want := colorize("src", colorForDepth(base, 0), true) +
 		string(filepath.Separator) +
-		colorize("vendor", ansiRGB(shadeForDepth(base, 1)), true) +
+		colorize("vendor", colorForDepth(base, 1), true) +
 		string(filepath.Separator) +
-		colorize("cache", ansiRGB(shadeForDepth(base, 2)), true)
+		colorize("cache", colorForDepth(base, 2), true)
 	if got != want {
 		t.Fatalf("display path = %q, want %q", got, want)
 	}

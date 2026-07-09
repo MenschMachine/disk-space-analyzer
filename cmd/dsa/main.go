@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -286,32 +285,33 @@ func writeEntriesTable(w io.Writer, root string, entries []scan.Entry, useColor 
 }
 
 const (
-	ansiReset      = "\033[0m"
-	ansiBold       = "\033[1m"
-	ansiDim        = "\033[2m"
-	ansiGreen      = "\033[32m"
-	ansiYellow     = "\033[33m"
-	ansiRed        = "\033[31m"
-	ansiCyan       = "\033[36m"
-	ansiCyanBold   = "\033[1;36m"
-	ansiYellowBold = "\033[1;33m"
+	ansiReset       = "\033[0m"
+	ansiBold        = "\033[1m"
+	ansiDim         = "\033[2m"
+	ansiGreen       = "\033[32m"
+	ansiYellow      = "\033[33m"
+	ansiRed         = "\033[31m"
+	ansiBlue        = "\033[34m"
+	ansiMagenta     = "\033[35m"
+	ansiCyan        = "\033[36m"
+	ansiGreenBold   = "\033[1;32m"
+	ansiBlueBold    = "\033[1;34m"
+	ansiMagentaBold = "\033[1;35m"
+	ansiCyanBold    = "\033[1;36m"
+	ansiYellowBold  = "\033[1;33m"
 )
 
-type rgbColor struct {
-	r int
-	g int
-	b int
+type branchColor struct {
+	normal string
+	bold   string
 }
 
-var branchBaseColors = []rgbColor{
-	{69, 211, 255},
-	{203, 116, 255},
-	{79, 220, 129},
-	{255, 209, 102},
-	{255, 139, 92},
-	{137, 161, 255},
-	{64, 214, 187},
-	{255, 117, 174},
+var branchBaseColors = []branchColor{
+	{normal: ansiCyan, bold: ansiCyanBold},
+	{normal: ansiMagenta, bold: ansiMagentaBold},
+	{normal: ansiGreen, bold: ansiGreenBold},
+	{normal: ansiYellow, bold: ansiYellowBold},
+	{normal: ansiBlue, bold: ansiBlueBold},
 }
 
 func shouldUseColor(w io.Writer) (bool, error) {
@@ -356,29 +356,22 @@ func displayPathWithBranchGradient(path, root string, useColor bool) string {
 		if i > 0 {
 			b.WriteString(string(filepath.Separator))
 		}
-		b.WriteString(colorize(segment, ansiRGB(shadeForDepth(base, i)), useColor))
+		b.WriteString(colorize(segment, colorForDepth(base, i), useColor))
 	}
 	return b.String()
 }
 
-func colorForTopLevelPath(path string) rgbColor {
+func colorForTopLevelPath(path string) branchColor {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(filepath.Clean(path)))
 	return branchBaseColors[int(h.Sum32())%len(branchBaseColors)]
 }
 
-func shadeForDepth(base rgbColor, depth int) rgbColor {
-	// Keep every descendant in the same hue family while making depth visible.
-	factor := math.Max(0.45, 1.0-float64(depth)*0.16)
-	return rgbColor{
-		r: int(float64(base.r) * factor),
-		g: int(float64(base.g) * factor),
-		b: int(float64(base.b) * factor),
+func colorForDepth(base branchColor, depth int) string {
+	if depth == 0 {
+		return base.bold
 	}
-}
-
-func ansiRGB(c rgbColor) string {
-	return fmt.Sprintf("\033[38;2;%d;%d;%dm", c.r, c.g, c.b)
+	return base.normal
 }
 
 func sizeColor(percent float64) string {

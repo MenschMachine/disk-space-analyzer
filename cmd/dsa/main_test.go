@@ -67,3 +67,25 @@ func TestParseArgsAllowsCrossFSAfterPath(t *testing.T) {
 		t.Fatal("crossFS = false, want true")
 	}
 }
+
+func TestParseArgsAllowsNoDeviceCheckAfterPath(t *testing.T) {
+	cfg, err := parseArgs([]string{".", "--no-device-check"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !cfg.noDeviceCheck {
+		t.Fatal("noDeviceCheck = false, want true")
+	}
+}
+
+func TestParseArgsAllowsRegularFilesOnlyAfterPath(t *testing.T) {
+	cfg, err := parseArgs([]string{".", "--regular-files-only"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !cfg.regularFilesOnly {
+		t.Fatal("regularFilesOnly = false, want true")
+	}
+}

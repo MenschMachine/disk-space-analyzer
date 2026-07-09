@@ -77,6 +77,30 @@ func TestScanExcludesBeforeAggregation(t *testing.T) {
 	}
 }
 
+func TestScanRegularFilesOnlySkipsSymlinks(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target.bin")
+	link := filepath.Join(root, "target.link")
+	writeFile(t, target, 10)
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("symlinks are not available: %v", err)
+	}
+
+	result, err := Scan(root, Options{
+		Limit:            10,
+		SizeMode:         SizeModeRecursive,
+		RegularFilesOnly: true,
+		Workers:          2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Total != 10 {
+		t.Fatalf("total = %d, want 10", result.Total)
+	}
+}
+
 func writeFile(t *testing.T, path string, size int) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

@@ -32,14 +32,16 @@ func (m *multiFlag) Set(value string) error {
 }
 
 type cliConfig struct {
-	format   string
-	limit    int
-	sizeMode string
-	excludes []string
-	workers  int
-	stream   bool
-	crossFS  bool
-	path     string
+	format           string
+	limit            int
+	sizeMode         string
+	excludes         []string
+	workers          int
+	stream           bool
+	crossFS          bool
+	noDeviceCheck    bool
+	regularFilesOnly bool
+	path             string
 }
 
 func main() {
@@ -70,11 +72,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	options := scan.Options{
-		Limit:           cfg.limit,
-		SizeMode:        mode,
-		ExcludePatterns: cfg.excludes,
-		Workers:         cfg.workers,
-		CrossFilesystem: cfg.crossFS,
+		Limit:            cfg.limit,
+		SizeMode:         mode,
+		ExcludePatterns:  cfg.excludes,
+		Workers:          cfg.workers,
+		CrossFilesystem:  cfg.crossFS,
+		NoDeviceCheck:    cfg.noDeviceCheck,
+		RegularFilesOnly: cfg.regularFilesOnly,
 	}
 	var writeMu sync.Mutex
 	useColor, err := shouldUseColor(stdout)
@@ -144,6 +148,8 @@ func parseArgs(args []string) (cliConfig, error) {
 	fs.StringVar(&cfg.sizeMode, "size-mode", cfg.sizeMode, "directory size mode: recursive or top-level")
 	fs.Var(&excludes, "exclude", "glob pattern to exclude; may be repeated")
 	fs.BoolVar(&cfg.crossFS, "cross-fs", cfg.crossFS, "descend into directories on other filesystems")
+	fs.BoolVar(&cfg.noDeviceCheck, "no-device-check", cfg.noDeviceCheck, "skip directory device checks; may cross filesystem boundaries")
+	fs.BoolVar(&cfg.regularFilesOnly, "regular-files-only", cfg.regularFilesOnly, "count only regular file entries")
 	fs.IntVar(&cfg.workers, "workers", cfg.workers, "number of scanner workers; defaults to logical CPUs")
 	fs.BoolVar(&cfg.stream, "stream", cfg.stream, "continuously refresh the current top directories while scanning")
 
@@ -223,6 +229,8 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "                                directory size aggregation mode (default recursive)")
 	fmt.Fprintln(w, "  --exclude GLOB                exclude paths matching glob; may be repeated")
 	fmt.Fprintln(w, "  --cross-fs                    descend into directories on other filesystems")
+	fmt.Fprintln(w, "  --no-device-check             skip directory device checks; may cross filesystem boundaries")
+	fmt.Fprintln(w, "  --regular-files-only          count only regular file entries")
 	fmt.Fprintln(w, "  --stream                      continuously refresh current top table while scanning")
 	fmt.Fprintln(w, "  --workers N                   scanner workers; defaults to logical CPUs")
 	fmt.Fprintln(w, "  --version                     show version")

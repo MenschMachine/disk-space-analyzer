@@ -3,6 +3,7 @@ package scan
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -17,16 +18,19 @@ type SizeMode string
 const (
 	SizeModeRecursive SizeMode = "recursive"
 	SizeModeTopLevel  SizeMode = "top-level"
+	readDirBatchSize           = 256
 )
 
 type Options struct {
-	Limit           int
-	SizeMode        SizeMode
-	ExcludePatterns []string
-	Workers         int
-	CrossFilesystem bool
-	Progress        func(Snapshot)
-	ProgressEvery   time.Duration
+	Limit            int
+	SizeMode         SizeMode
+	ExcludePatterns  []string
+	Workers          int
+	CrossFilesystem  bool
+	NoDeviceCheck    bool
+	RegularFilesOnly bool
+	Progress         func(Snapshot)
+	ProgressEvery    time.Duration
 }
 
 type Result struct {
@@ -112,9 +116,13 @@ func Scan(root string, opts Options) (Result, error) {
 	if !info.IsDir() {
 		return Result{}, fmt.Errorf("root path is not a directory: %s", absRoot)
 	}
-	rootDevice, err := deviceID(info)
-	if err != nil {
-		return Result{}, err
+	skipDeviceCheck := opts.CrossFilesystem || opts.NoDeviceCheck
+	var rootDevice uint64
+	if !skipDeviceCheck {
+		rootDevice, err = deviceID(info)
+		if err != nil {
+			return Result{}, err
+		}
 	}
 
 	matcher := newExcludeMatcher(absRoot, opts.ExcludePatterns)
@@ -147,7 +155,7 @@ func Scan(root string, opts Options) (Result, error) {
 
 	worker := func() {
 		for t := range tasks {
-			scanOne(t, absRoot, matcher, rootDevice, opts.CrossFilesystem, tasks, &wg, &mu, nodes, &errs)
+			scanOne(t, absRoot, matcher, rootDevice, skipDeviceCheck, opts.RegularFilesOnly, tasks, &wg, &mu, nodes, &errs)
 			wg.Done()
 		}
 	}
@@ -230,8 +238,8 @@ func snapshot(root string, mode SizeMode, limit int, nodes map[string]*node, err
 	}
 }
 
-func scanOne(t task, root string, matcher excludeMatcher, rootDevice uint64, crossFilesystem bool, tasks chan<- task, wg *sync.WaitGroup, mu *sync.Mutex, nodes map[string]*node, errs *[]ScanError) {
-	entries, err := os.ReadDir(t.path)
+func scanOne(t task, root string, matcher excludeMatcher, rootDevice uint64, skipDeviceCheck bool, regularFilesOnly bool, tasks chan<- task, wg *sync.WaitGroup, mu *sync.Mutex, nodes map[string]*node, errs *[]ScanError) {
+	dir, err := os.Open(t.path)
 	if err != nil {
 		mu.Lock()
 		*errs = append(*errs, ScanError{Path: t.path, Error: err.Error()})
@@ -239,45 +247,109 @@ func scanOne(t task, root string, matcher excludeMatcher, rootDevice uint64, cro
 		return
 	}
 
-	for _, entry := range entries {
-		childPath := filepath.Join(t.path, entry.Name())
-		if matcher.excluded(childPath, entry.Name()) {
-			continue
-		}
+	var directSize int64
+	childDirs := make([]string, 0)
+	localErrs := make([]ScanError, 0)
 
-		info, err := entry.Info()
-		if err != nil {
-			mu.Lock()
-			*errs = append(*errs, ScanError{Path: childPath, Error: err.Error()})
-			mu.Unlock()
-			continue
-		}
+	for {
+		entries, err := dir.ReadDir(readDirBatchSize)
+		for _, entry := range entries {
+			childPath := filepath.Join(t.path, entry.Name())
+			if matcher.excluded(childPath, entry.Name()) {
+				continue
+			}
 
-		if info.IsDir() {
-			childDevice, err := deviceID(info)
+			entryType := entry.Type()
+			if entryType.IsDir() {
+				if skipDeviceCheck {
+					childDirs = append(childDirs, childPath)
+					continue
+				}
+
+				info, err := entry.Info()
+				if err != nil {
+					localErrs = append(localErrs, ScanError{Path: childPath, Error: err.Error()})
+					continue
+				}
+				skip, err := shouldSkipDevice(info, rootDevice)
+				if err != nil {
+					localErrs = append(localErrs, ScanError{Path: childPath, Error: err.Error()})
+					continue
+				}
+				if skip {
+					continue
+				}
+
+				childDirs = append(childDirs, childPath)
+				continue
+			}
+			if regularFilesOnly && entryType != 0 {
+				continue
+			}
+
+			info, err := entry.Info()
 			if err != nil {
-				mu.Lock()
-				*errs = append(*errs, ScanError{Path: childPath, Error: err.Error()})
-				mu.Unlock()
-				continue
-			}
-			if !crossFilesystem && childDevice != rootDevice {
+				localErrs = append(localErrs, ScanError{Path: childPath, Error: err.Error()})
 				continue
 			}
 
-			mu.Lock()
-			nodes[childPath] = &node{path: childPath, parent: t.path}
-			nodes[t.path].children = append(nodes[t.path].children, childPath)
-			mu.Unlock()
-			wg.Add(1)
-			enqueueTask(tasks, task{path: childPath, parent: t.path})
-			continue
+			if info.IsDir() {
+				if !skipDeviceCheck {
+					skip, err := shouldSkipDevice(info, rootDevice)
+					if err != nil {
+						localErrs = append(localErrs, ScanError{Path: childPath, Error: err.Error()})
+						continue
+					}
+					if skip {
+						continue
+					}
+				}
+
+				childDirs = append(childDirs, childPath)
+				continue
+			}
+			if regularFilesOnly && !info.Mode().IsRegular() {
+				continue
+			}
+
+			directSize += info.Size()
 		}
 
-		mu.Lock()
-		nodes[t.path].directSize += info.Size()
-		mu.Unlock()
+		if err != nil {
+			if !errors.Is(err, io.EOF) {
+				localErrs = append(localErrs, ScanError{Path: t.path, Error: err.Error()})
+			}
+			break
+		}
 	}
+	if err := dir.Close(); err != nil {
+		localErrs = append(localErrs, ScanError{Path: t.path, Error: err.Error()})
+	}
+
+	mu.Lock()
+	current := nodes[t.path]
+	if current != nil {
+		current.directSize += directSize
+		for _, childPath := range childDirs {
+			nodes[childPath] = &node{path: childPath, parent: t.path}
+			current.children = append(current.children, childPath)
+		}
+	}
+	*errs = append(*errs, localErrs...)
+	mu.Unlock()
+
+	for _, childPath := range childDirs {
+		wg.Add(1)
+		enqueueTask(tasks, task{path: childPath, parent: t.path})
+	}
+}
+
+func shouldSkipDevice(info os.FileInfo, rootDevice uint64) (bool, error) {
+	childDevice, err := deviceID(info)
+	if err != nil {
+		return false, err
+	}
+	return childDevice != rootDevice, nil
 }
 
 func enqueueTask(tasks chan<- task, t task) {

@@ -19,6 +19,8 @@ If `path` is omitted, `dsa` scans the current working directory.
 - `--size-mode recursive|top-level`: directory aggregation mode. Defaults to `recursive`.
 - `--exclude GLOB`: exclude a path by glob pattern. May be repeated.
 - `--cross-fs`: descend into directories on other filesystems. By default, `dsa` stays on the scanned root's filesystem.
+- `--no-device-check`: skip directory device checks. This can be faster on slow filesystems and may cross filesystem boundaries.
+- `--regular-files-only`: count only regular file entries. Symlinks and special files are ignored.
 - `--stream`: continuously refresh the current top directories while scanning. Requires table output.
 - `--workers N`: scanner worker count. Defaults to logical CPUs.
 - `--version`: print the version and exit.
@@ -39,6 +41,8 @@ The installer downloads the latest `.deb`, verifies it against the release `chec
 - `top-level`: a directory's size is the sum of only direct non-excluded file entries in that directory.
 
 Symlinks are not followed. A symlink entry is counted by the symlink entry's apparent size.
+
+With `--regular-files-only`, only regular file entries are counted. Directory traversal still occurs, but symlink entries and special files do not contribute to directory sizes.
 
 ## Errors
 

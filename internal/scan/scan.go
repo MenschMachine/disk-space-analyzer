@@ -116,6 +116,11 @@ func Scan(root string, opts Options) (Result, error) {
 	if !info.IsDir() {
 		return Result{}, fmt.Errorf("root path is not a directory: %s", absRoot)
 	}
+	if isPseudo, err := isPseudoFilesystem(absRoot); err != nil {
+		return Result{}, err
+	} else if isPseudo {
+		return emptyResult(absRoot, mode), nil
+	}
 	skipDeviceCheck := opts.CrossFilesystem || opts.NoDeviceCheck
 	var rootDevice uint64
 	if !skipDeviceCheck {
@@ -261,6 +266,12 @@ func scanOne(t task, root string, matcher excludeMatcher, rootDevice uint64, ski
 
 			entryType := entry.Type()
 			if entryType.IsDir() {
+				if skip, err := shouldSkipPseudoFilesystem(childPath); skip {
+					continue
+				} else if err != nil {
+					localErrs = append(localErrs, ScanError{Path: childPath, Error: err.Error()})
+					continue
+				}
 				if skipDeviceCheck {
 					childDirs = append(childDirs, childPath)
 					continue
@@ -294,6 +305,12 @@ func scanOne(t task, root string, matcher excludeMatcher, rootDevice uint64, ski
 			}
 
 			if info.IsDir() {
+				if skip, err := shouldSkipPseudoFilesystem(childPath); skip {
+					continue
+				} else if err != nil {
+					localErrs = append(localErrs, ScanError{Path: childPath, Error: err.Error()})
+					continue
+				}
 				if !skipDeviceCheck {
 					skip, err := shouldSkipDevice(info, rootDevice)
 					if err != nil {
@@ -342,6 +359,24 @@ func scanOne(t task, root string, matcher excludeMatcher, rootDevice uint64, ski
 		wg.Add(1)
 		enqueueTask(tasks, task{path: childPath, parent: t.path})
 	}
+}
+
+func emptyResult(root string, mode SizeMode) Result {
+	return Result{
+		Root:     root,
+		SizeMode: mode,
+		Total:    0,
+		Entries: []Entry{{
+			Path:    root,
+			Size:    0,
+			Percent: 0,
+		}},
+		Errors: []ScanError{},
+	}
+}
+
+func shouldSkipPseudoFilesystem(path string) (bool, error) {
+	return isPseudoFilesystem(path)
 }
 
 func shouldSkipDevice(info os.FileInfo, rootDevice uint64) (bool, error) {

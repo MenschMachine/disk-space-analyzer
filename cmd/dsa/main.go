@@ -230,6 +230,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --exclude GLOB                exclude paths matching glob; may be repeated")
 	fmt.Fprintln(w, "  --cross-fs                    descend into directories on other filesystems")
 	fmt.Fprintln(w, "  --no-device-check             skip directory device checks; may cross filesystem boundaries")
+	fmt.Fprintln(w, "                                pseudo-filesystems are still excluded")
 	fmt.Fprintln(w, "  --regular-files-only          count only regular file entries")
 	fmt.Fprintln(w, "  --stream                      continuously refresh current top table while scanning")
 	fmt.Fprintln(w, "  --workers N                   scanner workers; defaults to logical CPUs")

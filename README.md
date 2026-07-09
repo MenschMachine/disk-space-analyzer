@@ -18,6 +18,7 @@ If `path` is omitted, `dsa` scans the current working directory.
 - `--limit N`: maximum number of directories to report. Defaults to `50`.
 - `--size-mode recursive|top-level`: directory aggregation mode. Defaults to `recursive`.
 - `--exclude GLOB`: exclude a path by glob pattern. May be repeated.
+- `--cross-fs`: descend into directories on other filesystems. By default, `dsa` stays on the scanned root's filesystem.
 - `--stream`: continuously refresh the current top directories while scanning. Requires table output.
 - `--workers N`: scanner worker count. Defaults to logical CPUs.
 

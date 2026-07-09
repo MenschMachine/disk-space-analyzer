@@ -36,6 +36,7 @@ type cliConfig struct {
 	excludes []string
 	workers  int
 	stream   bool
+	crossFS  bool
 	path     string
 }
 
@@ -66,6 +67,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		SizeMode:        mode,
 		ExcludePatterns: cfg.excludes,
 		Workers:         cfg.workers,
+		CrossFilesystem: cfg.crossFS,
 	}
 	var writeMu sync.Mutex
 	useColor, err := shouldUseColor(stdout)
@@ -134,6 +136,7 @@ func parseArgs(args []string) (cliConfig, error) {
 	fs.IntVar(&cfg.limit, "limit", cfg.limit, "maximum number of directories to show")
 	fs.StringVar(&cfg.sizeMode, "size-mode", cfg.sizeMode, "directory size mode: recursive or top-level")
 	fs.Var(&excludes, "exclude", "glob pattern to exclude; may be repeated")
+	fs.BoolVar(&cfg.crossFS, "cross-fs", cfg.crossFS, "descend into directories on other filesystems")
 	fs.IntVar(&cfg.workers, "workers", cfg.workers, "number of scanner workers; defaults to logical CPUs")
 	fs.BoolVar(&cfg.stream, "stream", cfg.stream, "continuously refresh the current top directories while scanning")
 
@@ -212,6 +215,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --size-mode recursive|top-level")
 	fmt.Fprintln(w, "                                directory size aggregation mode (default recursive)")
 	fmt.Fprintln(w, "  --exclude GLOB                exclude paths matching glob; may be repeated")
+	fmt.Fprintln(w, "  --cross-fs                    descend into directories on other filesystems")
 	fmt.Fprintln(w, "  --stream                      continuously refresh current top table while scanning")
 	fmt.Fprintln(w, "  --workers N                   scanner workers; defaults to logical CPUs")
 	fmt.Fprintln(w, "  --help                        show this help")

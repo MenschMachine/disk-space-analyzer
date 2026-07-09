@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"path/filepath"
 	"testing"
 )
 
@@ -87,5 +88,66 @@ func TestParseArgsAllowsRegularFilesOnlyAfterPath(t *testing.T) {
 
 	if !cfg.regularFilesOnly {
 		t.Fatal("regularFilesOnly = false, want true")
+	}
+}
+
+func TestDisplayPathWithBranchGradientUsesOneHueForBranch(t *testing.T) {
+	root := filepath.Join("tmp", "scan")
+	parent := filepath.Join(root, "node_modules")
+	child := filepath.Join(parent, ".cache")
+
+	base := colorForTopLevelPath("node_modules")
+	got := displayPathWithBranchGradient(child, root, true)
+	want := colorize("node_modules", ansiRGB(shadeForDepth(base, 0)), true) +
+		string(filepath.Separator) +
+		colorize(".cache", ansiRGB(shadeForDepth(base, 1)), true)
+	if got != want {
+		t.Fatalf("display path = %q, want %q", got, want)
+	}
+}
+
+func TestDisplayPathWithBranchGradientUsesSamePrefixColorsForParentAndChild(t *testing.T) {
+	root := filepath.Join("tmp", "scan")
+	parent := filepath.Join(root, "node_modules")
+	child := filepath.Join(parent, ".cache")
+
+	parentDisplay := displayPathWithBranchGradient(parent, root, true)
+	childDisplay := displayPathWithBranchGradient(child, root, true)
+
+	if parentDisplay != colorize("node_modules", ansiRGB(shadeForDepth(colorForTopLevelPath("node_modules"), 0)), true) {
+		t.Fatalf("parent display = %q, want top-level branch color", parentDisplay)
+	}
+	wantPrefix := parentDisplay + string(filepath.Separator)
+	if childDisplay[:len(wantPrefix)] != wantPrefix {
+		t.Fatalf("child display = %q, want prefix %q", childDisplay, wantPrefix)
+	}
+}
+
+func TestDisplayPathWithBranchGradientDarkensByDepth(t *testing.T) {
+	root := filepath.Join("tmp", "scan")
+	grandparent := filepath.Join(root, "src")
+	parent := filepath.Join(grandparent, "vendor")
+	child := filepath.Join(parent, "cache")
+
+	base := colorForTopLevelPath("src")
+	got := displayPathWithBranchGradient(child, root, true)
+	want := colorize("src", ansiRGB(shadeForDepth(base, 0)), true) +
+		string(filepath.Separator) +
+		colorize("vendor", ansiRGB(shadeForDepth(base, 1)), true) +
+		string(filepath.Separator) +
+		colorize("cache", ansiRGB(shadeForDepth(base, 2)), true)
+	if got != want {
+		t.Fatalf("display path = %q, want %q", got, want)
+	}
+}
+
+func TestDisplayPathWithBranchGradientLeavesPlainPathWhenColorDisabled(t *testing.T) {
+	root := filepath.Join("tmp", "scan")
+	child := filepath.Join(root, "node_modules", ".cache")
+
+	got := displayPathWithBranchGradient(child, root, false)
+	want := filepath.Join("node_modules", ".cache")
+	if got != want {
+		t.Fatalf("display path = %q, want %q", got, want)
 	}
 }

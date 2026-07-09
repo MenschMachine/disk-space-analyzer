@@ -5,7 +5,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"hash/fnv"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -273,15 +275,11 @@ func writeEntriesTable(w io.Writer, root string, entries []scan.Entry, useColor 
 		colorize("PERCENT", ansiBold, useColor),
 		colorize("PATH", ansiBold, useColor),
 	)
-	for idx, entry := range entries {
-		pathColor := ansiReset
-		if idx == 0 {
-			pathColor = ansiCyan
-		}
+	for _, entry := range entries {
 		fmt.Fprintf(tw, "%s\t%s\t%s\n",
 			colorize(humanSize(entry.Size), sizeColor(entry.Percent), useColor),
 			colorize(fmt.Sprintf("%.1f%%", entry.Percent), percentColor(entry.Percent), useColor),
-			colorize(displayPath(entry.Path, root), pathColor, useColor),
+			displayPathWithBranchGradient(entry.Path, root, useColor),
 		)
 	}
 	_ = tw.Flush()
@@ -298,6 +296,23 @@ const (
 	ansiCyanBold   = "\033[1;36m"
 	ansiYellowBold = "\033[1;33m"
 )
+
+type rgbColor struct {
+	r int
+	g int
+	b int
+}
+
+var branchBaseColors = []rgbColor{
+	{69, 211, 255},
+	{203, 116, 255},
+	{79, 220, 129},
+	{255, 209, 102},
+	{255, 139, 92},
+	{137, 161, 255},
+	{64, 214, 187},
+	{255, 117, 174},
+}
 
 func shouldUseColor(w io.Writer) (bool, error) {
 	if _, ok := os.LookupEnv("NO_COLOR"); ok {
@@ -319,6 +334,51 @@ func colorize(value, color string, enabled bool) string {
 		return value
 	}
 	return color + value + ansiReset
+}
+
+func displayPathWithBranchGradient(path, root string, useColor bool) string {
+	display := displayPath(path, root)
+	if !useColor {
+		return display
+	}
+	if display == path {
+		return colorize(display, ansiCyan, useColor)
+	}
+
+	segments := strings.Split(filepath.ToSlash(display), "/")
+	if len(segments) == 0 || segments[0] == "" {
+		return display
+	}
+
+	base := colorForTopLevelPath(segments[0])
+	var b strings.Builder
+	for i, segment := range segments {
+		if i > 0 {
+			b.WriteString(string(filepath.Separator))
+		}
+		b.WriteString(colorize(segment, ansiRGB(shadeForDepth(base, i)), useColor))
+	}
+	return b.String()
+}
+
+func colorForTopLevelPath(path string) rgbColor {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(filepath.Clean(path)))
+	return branchBaseColors[int(h.Sum32())%len(branchBaseColors)]
+}
+
+func shadeForDepth(base rgbColor, depth int) rgbColor {
+	// Keep every descendant in the same hue family while making depth visible.
+	factor := math.Max(0.45, 1.0-float64(depth)*0.16)
+	return rgbColor{
+		r: int(float64(base.r) * factor),
+		g: int(float64(base.g) * factor),
+		b: int(float64(base.b) * factor),
+	}
+}
+
+func ansiRGB(c rgbColor) string {
+	return fmt.Sprintf("\033[38;2;%d;%d;%dm", c.r, c.g, c.b)
 }
 
 func sizeColor(percent float64) string {

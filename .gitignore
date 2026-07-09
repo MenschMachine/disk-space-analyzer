@@ -1,0 +1,31 @@
+# Local configuration and secrets.
+config.yaml
+.env
+.env.*
+
+# Build outputs.
+upag
+bin/
+dist/
+
+# Test and coverage artifacts.
+*.test
+coverage.out
+coverage.html
+
+# Runtime data.
+*.db
+*.log
+*.pid
+*.sqlite
+*.sqlite3
+upag.sqlite-journal
+
+# Temporary files.
+tmp/
+*.tmp
+
+# Editor and OS metadata.
+.DS_Store
+.idea/
+.vscode/

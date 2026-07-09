@@ -5,7 +5,6 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"os"
 	"path/filepath"
@@ -269,6 +268,7 @@ func writeTable(w io.Writer, result scan.Result, useColor bool) {
 
 func writeEntriesTable(w io.Writer, root string, entries []scan.Entry, useColor bool) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	branchColors := branchColorsForEntries(root, entries)
 	fmt.Fprintf(tw, "%s\t%s\t%s\n",
 		colorize("SIZE", ansiBold, useColor),
 		colorize("PERCENT", ansiBold, useColor),
@@ -278,7 +278,7 @@ func writeEntriesTable(w io.Writer, root string, entries []scan.Entry, useColor 
 		fmt.Fprintf(tw, "%s\t%s\t%s\n",
 			colorize(humanSize(entry.Size), sizeColor(entry.Percent), useColor),
 			colorize(fmt.Sprintf("%.1f%%", entry.Percent), percentColor(entry.Percent), useColor),
-			displayPathWithBranchGradient(entry.Path, root, useColor),
+			displayPathWithBranchColor(entry.Path, root, branchColors, useColor),
 		)
 	}
 	_ = tw.Flush()
@@ -302,16 +302,26 @@ const (
 )
 
 type branchColor struct {
-	normal string
-	bold   string
+	shades [4]string
 }
 
 var branchBaseColors = []branchColor{
-	{normal: ansiCyan, bold: ansiCyanBold},
-	{normal: ansiMagenta, bold: ansiMagentaBold},
-	{normal: ansiGreen, bold: ansiGreenBold},
-	{normal: ansiYellow, bold: ansiYellowBold},
-	{normal: ansiBlue, bold: ansiBlueBold},
+	ansi256BranchRamp(82, 76, 70, 64),
+	ansi256BranchRamp(51, 45, 39, 33),
+	ansi256BranchRamp(219, 213, 207, 201),
+	ansi256BranchRamp(220, 214, 208, 202),
+	ansi256BranchRamp(117, 111, 105, 99),
+	ansi256BranchRamp(215, 209, 203, 197),
+	ansi256BranchRamp(183, 177, 171, 165),
+	ansi256BranchRamp(86, 80, 74, 68),
+	ansi256BranchRamp(154, 148, 142, 136),
+	ansi256BranchRamp(81, 75, 69, 63),
+	ansi256BranchRamp(203, 167, 131, 95),
+	ansi256BranchRamp(147, 141, 135, 129),
+	ansi256BranchRamp(121, 85, 49, 35),
+	ansi256BranchRamp(229, 223, 217, 211),
+	ansi256BranchRamp(159, 153, 147, 141),
+	ansi256BranchRamp(218, 212, 206, 200),
 }
 
 func shouldUseColor(w io.Writer) (bool, error) {
@@ -336,7 +346,7 @@ func colorize(value, color string, enabled bool) string {
 	return color + value + ansiReset
 }
 
-func displayPathWithBranchGradient(path, root string, useColor bool) string {
+func displayPathWithBranchColor(path, root string, branchColors map[string]branchColor, useColor bool) string {
 	display := displayPath(path, root)
 	if !useColor {
 		return display
@@ -350,7 +360,10 @@ func displayPathWithBranchGradient(path, root string, useColor bool) string {
 		return display
 	}
 
-	base := colorForTopLevelPath(segments[0])
+	base, ok := branchColors[segments[0]]
+	if !ok {
+		base = branchBaseColors[0]
+	}
 	var b strings.Builder
 	for i, segment := range segments {
 		if i > 0 {
@@ -361,17 +374,54 @@ func displayPathWithBranchGradient(path, root string, useColor bool) string {
 	return b.String()
 }
 
-func colorForTopLevelPath(path string) branchColor {
-	h := fnv.New32a()
-	_, _ = h.Write([]byte(filepath.Clean(path)))
-	return branchBaseColors[int(h.Sum32())%len(branchBaseColors)]
+func branchColorsForEntries(root string, entries []scan.Entry) map[string]branchColor {
+	colors := make(map[string]branchColor)
+	for _, entry := range entries {
+		topLevel, ok := topLevelSegment(entry.Path, root)
+		if !ok {
+			continue
+		}
+		if _, exists := colors[topLevel]; exists {
+			continue
+		}
+		colors[topLevel] = branchBaseColors[len(colors)%len(branchBaseColors)]
+	}
+	return colors
+}
+
+func topLevelSegment(path, root string) (string, bool) {
+	display := displayPath(path, root)
+	if display == path {
+		return "", false
+	}
+	segments := strings.Split(filepath.ToSlash(display), "/")
+	if len(segments) == 0 || segments[0] == "" {
+		return "", false
+	}
+	return segments[0], true
 }
 
 func colorForDepth(base branchColor, depth int) string {
 	if depth == 0 {
-		return base.bold
+		return "\033[1;" + strings.TrimPrefix(base.shades[0], "\033[")
 	}
-	return base.normal
+	if depth >= len(base.shades) {
+		depth = len(base.shades) - 1
+	}
+	return base.shades[depth]
+}
+
+func ansi256BranchRamp(c0, c1, c2, c3 int) branchColor {
+	return branchColor{shades: [4]string{
+		ansi256Foreground(c0),
+		ansi256Foreground(c1),
+		ansi256Foreground(c2),
+		ansi256Foreground(c3),
+	}}
+}
+
+func ansi256Foreground(code int) string {
+	return fmt.Sprintf("\033[38;5;%dm", code)
 }
 
 func sizeColor(percent float64) string {

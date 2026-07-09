@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"path/filepath"
 	"testing"
+
+	"github.com/MenschMachine/disk-space-analyzer/internal/scan"
 )
 
 func TestRunVersion(t *testing.T) {
@@ -91,13 +93,14 @@ func TestParseArgsAllowsRegularFilesOnlyAfterPath(t *testing.T) {
 	}
 }
 
-func TestDisplayPathWithBranchGradientUsesOneHueForBranch(t *testing.T) {
+func TestDisplayPathWithBranchColorUsesOneColorForBranch(t *testing.T) {
 	root := filepath.Join("tmp", "scan")
 	parent := filepath.Join(root, "node_modules")
 	child := filepath.Join(parent, ".cache")
 
-	base := colorForTopLevelPath("node_modules")
-	got := displayPathWithBranchGradient(child, root, true)
+	branchColors := branchColorsForEntries(root, []scan.Entry{{Path: parent}, {Path: child}})
+	base := branchColors["node_modules"]
+	got := displayPathWithBranchColor(child, root, branchColors, true)
 	want := colorize("node_modules", colorForDepth(base, 0), true) +
 		string(filepath.Separator) +
 		colorize(".cache", colorForDepth(base, 1), true)
@@ -106,15 +109,16 @@ func TestDisplayPathWithBranchGradientUsesOneHueForBranch(t *testing.T) {
 	}
 }
 
-func TestDisplayPathWithBranchGradientUsesSamePrefixColorsForParentAndChild(t *testing.T) {
+func TestDisplayPathWithBranchColorUsesSamePrefixColorsForParentAndChild(t *testing.T) {
 	root := filepath.Join("tmp", "scan")
 	parent := filepath.Join(root, "node_modules")
 	child := filepath.Join(parent, ".cache")
 
-	parentDisplay := displayPathWithBranchGradient(parent, root, true)
-	childDisplay := displayPathWithBranchGradient(child, root, true)
+	branchColors := branchColorsForEntries(root, []scan.Entry{{Path: parent}, {Path: child}})
+	parentDisplay := displayPathWithBranchColor(parent, root, branchColors, true)
+	childDisplay := displayPathWithBranchColor(child, root, branchColors, true)
 
-	if parentDisplay != colorize("node_modules", colorForDepth(colorForTopLevelPath("node_modules"), 0), true) {
+	if parentDisplay != colorize("node_modules", colorForDepth(branchColors["node_modules"], 0), true) {
 		t.Fatalf("parent display = %q, want top-level branch color", parentDisplay)
 	}
 	wantPrefix := parentDisplay + string(filepath.Separator)
@@ -123,14 +127,15 @@ func TestDisplayPathWithBranchGradientUsesSamePrefixColorsForParentAndChild(t *t
 	}
 }
 
-func TestDisplayPathWithBranchGradientUsesNormalBranchColorForDescendants(t *testing.T) {
+func TestDisplayPathWithBranchColorUsesGradientForDescendants(t *testing.T) {
 	root := filepath.Join("tmp", "scan")
 	grandparent := filepath.Join(root, "src")
 	parent := filepath.Join(grandparent, "vendor")
 	child := filepath.Join(parent, "cache")
 
-	base := colorForTopLevelPath("src")
-	got := displayPathWithBranchGradient(child, root, true)
+	branchColors := branchColorsForEntries(root, []scan.Entry{{Path: grandparent}, {Path: parent}, {Path: child}})
+	base := branchColors["src"]
+	got := displayPathWithBranchColor(child, root, branchColors, true)
 	want := colorize("src", colorForDepth(base, 0), true) +
 		string(filepath.Separator) +
 		colorize("vendor", colorForDepth(base, 1), true) +
@@ -139,15 +144,40 @@ func TestDisplayPathWithBranchGradientUsesNormalBranchColorForDescendants(t *tes
 	if got != want {
 		t.Fatalf("display path = %q, want %q", got, want)
 	}
+	if colorForDepth(base, 1) == colorForDepth(base, 2) {
+		t.Fatal("depth 1 and depth 2 use the same color")
+	}
 }
 
-func TestDisplayPathWithBranchGradientLeavesPlainPathWhenColorDisabled(t *testing.T) {
+func TestDisplayPathWithBranchColorLeavesPlainPathWhenColorDisabled(t *testing.T) {
 	root := filepath.Join("tmp", "scan")
 	child := filepath.Join(root, "node_modules", ".cache")
 
-	got := displayPathWithBranchGradient(child, root, false)
+	branchColors := branchColorsForEntries(root, []scan.Entry{{Path: child}})
+	got := displayPathWithBranchColor(child, root, branchColors, false)
 	want := filepath.Join("node_modules", ".cache")
 	if got != want {
 		t.Fatalf("display path = %q, want %q", got, want)
+	}
+}
+
+func TestBranchColorsForEntriesDoesNotReuseColorsBeforePaletteWrap(t *testing.T) {
+	root := filepath.Join("tmp", "scan")
+	entries := []scan.Entry{
+		{Path: filepath.Join(root, "michael")},
+		{Path: filepath.Join(root, "michael", "icloud")},
+		{Path: filepath.Join(root, "pdfdancer-pii-detection")},
+		{Path: filepath.Join(root, "font-identifier")},
+	}
+
+	colors := branchColorsForEntries(root, entries)
+	if colors["michael"] == colors["pdfdancer-pii-detection"] {
+		t.Fatal("michael and pdfdancer-pii-detection were assigned the same color")
+	}
+	if colors["michael"] == colors["font-identifier"] {
+		t.Fatal("michael and font-identifier were assigned the same color")
+	}
+	if colors["pdfdancer-pii-detection"] == colors["font-identifier"] {
+		t.Fatal("pdfdancer-pii-detection and font-identifier were assigned the same color")
 	}
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly REPO_OWNER="mlahr"
+readonly REPO_OWNER="MenschMachine"
 readonly REPO_NAME="disk-space-analyzer"
 readonly RELEASE_BASE_URL="https://github.com/${REPO_OWNER}/${REPO_NAME}/releases/latest/download"
 readonly INSTALLER_VERSION="2026-07-09.1"

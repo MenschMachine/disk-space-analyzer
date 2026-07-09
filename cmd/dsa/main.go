@@ -13,7 +13,7 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/mlahr/disk-space-analyzer/internal/scan"
+	"github.com/MenschMachine/disk-space-analyzer/internal/scan"
 )
 
 const defaultLimit = 50

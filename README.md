@@ -28,7 +28,7 @@ If `path` is omitted, `dsa` scans the current working directory.
 On Debian-based Linux systems, install the latest GitHub release with:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mlahr/disk-space-analyzer/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/MenschMachine/disk-space-analyzer/main/install.sh | bash
 ```
 
 The installer downloads the latest `.deb`, verifies it against the release `checksums.txt`, and installs it with `apt-get`.

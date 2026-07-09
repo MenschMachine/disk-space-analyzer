@@ -33,10 +33,6 @@ curl -fsSL https://raw.githubusercontent.com/mlahr/disk-space-analyzer/main/inst
 
 The installer downloads the latest `.deb`, verifies it against the release `checksums.txt`, and installs it with `apt-get`.
 
-## Release
-
-Tagged releases use the same publishing flow as `upag`: pushing a `v*` tag runs GoReleaser in GitHub Actions, publishes a GitHub release, and attaches Linux `amd64` tarball, `.deb`, and checksum assets.
-
 ## Size Modes
 
 - `recursive`: a directory's size is the inclusive sum of all non-excluded file entries under that directory.

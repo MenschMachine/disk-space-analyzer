@@ -3,6 +3,7 @@ package scan
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -74,6 +75,117 @@ func TestScanExcludesBeforeAggregation(t *testing.T) {
 		if filepath.Base(entry.Path) == "node_modules" {
 			t.Fatal("excluded directory was reported")
 		}
+	}
+}
+
+func TestScanIgnoreFileUsesRootRelativeGitStyleRules(t *testing.T) {
+	root := t.TempDir()
+	ignoreFile := filepath.Join(t.TempDir(), "rules")
+	writeFile(t, filepath.Join(root, "keep.bin"), 10)
+	writeFile(t, filepath.Join(root, "cache", "drop.bin"), 40)
+	writeFile(t, filepath.Join(root, "cache", "keep.bin"), 20)
+	writeFile(t, filepath.Join(root, "dist", "drop.bin"), 30)
+	writeFile(t, filepath.Join(root, "nested", "old.tmp"), 50)
+	writeFile(t, filepath.Join(root, "nested", "root-only"), 60)
+	writeFile(t, filepath.Join(root, "root-only"), 70)
+	writeText(t, ignoreFile, strings.Join([]string{
+		"# backup exclusions",
+		"cache/",
+		"!cache/keep.bin",
+		"/dist/",
+		"*.tmp",
+		"/root-only",
+	}, "\n"))
+
+	result, err := Scan(root, Options{
+		Limit:       20,
+		SizeMode:    SizeModeRecursive,
+		IgnoreFiles: []string{ignoreFile},
+		Workers:     2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Total != 90 {
+		t.Fatalf("total = %d, want 90", result.Total)
+	}
+	for _, entry := range result.Entries {
+		if base := filepath.Base(entry.Path); base == "cache" || base == "dist" || entry.Path == filepath.Join(root, "root-only") {
+			t.Fatalf("ignored path was reported: %s", entry.Path)
+		}
+	}
+}
+
+func TestScanIgnoreFileSupportsAbsoluteRules(t *testing.T) {
+	root := t.TempDir()
+	ignoreFile := filepath.Join(t.TempDir(), "rules")
+	writeFile(t, filepath.Join(root, "keep.bin"), 10)
+	writeFile(t, filepath.Join(root, "ignored", "drop.bin"), 90)
+	writeText(t, ignoreFile, filepath.Join(root, "ignored")+"\n")
+
+	result, err := Scan(root, Options{
+		Limit:       10,
+		SizeMode:    SizeModeRecursive,
+		IgnoreFiles: []string{ignoreFile},
+		Workers:     2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 10 {
+		t.Fatalf("total = %d, want 10", result.Total)
+	}
+}
+
+func TestScanIgnoreFileSupportsDoubleStarRules(t *testing.T) {
+	root := t.TempDir()
+	ignoreFile := filepath.Join(t.TempDir(), "rules")
+	writeFile(t, filepath.Join(root, "archive", "one", "generated", "drop.bin"), 90)
+	writeFile(t, filepath.Join(root, "archive", "one", "keep.bin"), 10)
+	writeText(t, ignoreFile, "archive/**/generated/\n")
+
+	result, err := Scan(root, Options{
+		Limit:       10,
+		SizeMode:    SizeModeRecursive,
+		IgnoreFiles: []string{ignoreFile},
+		Workers:     2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 10 {
+		t.Fatalf("total = %d, want 10", result.Total)
+	}
+}
+
+func TestScanIgnoreFileDoesNotOverrideExclude(t *testing.T) {
+	root := t.TempDir()
+	ignoreFile := filepath.Join(t.TempDir(), "rules")
+	writeFile(t, filepath.Join(root, "cache", "keep.bin"), 20)
+	writeText(t, ignoreFile, "!cache/keep.bin\n")
+
+	result, err := Scan(root, Options{
+		Limit:           10,
+		SizeMode:        SizeModeRecursive,
+		ExcludePatterns: []string{"cache"},
+		IgnoreFiles:     []string{ignoreFile},
+		Workers:         2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Total != 0 {
+		t.Fatalf("total = %d, want 0", result.Total)
+	}
+}
+
+func TestScanRejectsUnreadableIgnoreFile(t *testing.T) {
+	_, err := Scan(t.TempDir(), Options{
+		IgnoreFiles: []string{filepath.Join(t.TempDir(), "missing")},
+	})
+	if err == nil || !strings.Contains(err.Error(), "read ignore file") {
+		t.Fatalf("error = %v, want read ignore file error", err)
 	}
 }
 
@@ -177,6 +289,13 @@ func writeFile(t *testing.T, path string, size int) {
 	}
 	data := make([]byte, size)
 	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeText(t *testing.T, path, contents string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

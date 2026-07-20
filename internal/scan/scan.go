@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -25,6 +26,7 @@ type Options struct {
 	Limit            int
 	SizeMode         SizeMode
 	ExcludePatterns  []string
+	IgnoreFiles      []string
 	Workers          int
 	CrossFilesystem  bool
 	NoDeviceCheck    bool
@@ -65,6 +67,11 @@ type ScanError struct {
 type task struct {
 	path   string
 	parent string
+}
+
+type childDir struct {
+	path     string
+	excluded bool
 }
 
 type node struct {
@@ -130,7 +137,10 @@ func Scan(root string, opts Options) (Result, error) {
 		}
 	}
 
-	matcher := newExcludeMatcher(absRoot, opts.ExcludePatterns)
+	matcher, err := newExcludeMatcher(absRoot, opts.ExcludePatterns, opts.IgnoreFiles)
+	if err != nil {
+		return Result{}, err
+	}
 	nodes := map[string]*node{
 		absRoot: {path: absRoot},
 	}
@@ -170,7 +180,7 @@ func Scan(root string, opts Options) (Result, error) {
 	}
 
 	wg.Add(1)
-	tasks <- task{path: absRoot}
+	tasks <- task{path: absRoot, parent: absRoot}
 	wg.Wait()
 	close(tasks)
 	close(done)
@@ -253,19 +263,30 @@ func scanOne(t task, root string, matcher excludeMatcher, rootDevice uint64, ski
 	}
 
 	var directSize int64
-	childDirs := make([]string, 0)
+	childDirs := make([]childDir, 0)
 	localErrs := make([]ScanError, 0)
 
 	for {
 		entries, err := dir.ReadDir(readDirBatchSize)
 		for _, entry := range entries {
 			childPath := filepath.Join(t.path, entry.Name())
-			if matcher.excluded(childPath, entry.Name()) {
+			if matcher.manualExcluded(childPath, entry.Name()) {
 				continue
 			}
-
 			entryType := entry.Type()
-			if entryType.IsDir() {
+			var info os.FileInfo
+			isDir := entryType.IsDir()
+			if !isDir && entryType == 0 {
+				info, err = entry.Info()
+				if err != nil {
+					localErrs = append(localErrs, ScanError{Path: childPath, Error: err.Error()})
+					continue
+				}
+				isDir = info.IsDir()
+			}
+
+			if isDir {
+				excluded := matcher.excluded(childPath, entry.Name(), true)
 				if skip, err := shouldSkipPseudoFilesystem(childPath); skip {
 					continue
 				} else if err != nil {
@@ -273,14 +294,16 @@ func scanOne(t task, root string, matcher excludeMatcher, rootDevice uint64, ski
 					continue
 				}
 				if skipDeviceCheck {
-					childDirs = append(childDirs, childPath)
+					childDirs = append(childDirs, childDir{path: childPath, excluded: excluded})
 					continue
 				}
 
-				info, err := entry.Info()
-				if err != nil {
-					localErrs = append(localErrs, ScanError{Path: childPath, Error: err.Error()})
-					continue
+				if info == nil {
+					info, err = entry.Info()
+					if err != nil {
+						localErrs = append(localErrs, ScanError{Path: childPath, Error: err.Error()})
+						continue
+					}
 				}
 				skip, err := shouldSkipDevice(info, rootDevice)
 				if err != nil {
@@ -291,39 +314,22 @@ func scanOne(t task, root string, matcher excludeMatcher, rootDevice uint64, ski
 					continue
 				}
 
-				childDirs = append(childDirs, childPath)
+				childDirs = append(childDirs, childDir{path: childPath, excluded: excluded})
+				continue
+			}
+			if matcher.excluded(childPath, entry.Name(), false) {
 				continue
 			}
 			if regularFilesOnly && entryType != 0 {
 				continue
 			}
 
-			info, err := entry.Info()
-			if err != nil {
-				localErrs = append(localErrs, ScanError{Path: childPath, Error: err.Error()})
-				continue
-			}
-
-			if info.IsDir() {
-				if skip, err := shouldSkipPseudoFilesystem(childPath); skip {
-					continue
-				} else if err != nil {
+			if info == nil {
+				info, err = entry.Info()
+				if err != nil {
 					localErrs = append(localErrs, ScanError{Path: childPath, Error: err.Error()})
 					continue
 				}
-				if !skipDeviceCheck {
-					skip, err := shouldSkipDevice(info, rootDevice)
-					if err != nil {
-						localErrs = append(localErrs, ScanError{Path: childPath, Error: err.Error()})
-						continue
-					}
-					if skip {
-						continue
-					}
-				}
-
-				childDirs = append(childDirs, childPath)
-				continue
 			}
 			if regularFilesOnly && !info.Mode().IsRegular() {
 				continue
@@ -344,20 +350,27 @@ func scanOne(t task, root string, matcher excludeMatcher, rootDevice uint64, ski
 	}
 
 	mu.Lock()
-	current := nodes[t.path]
+	current := nodes[t.parent]
 	if current != nil {
 		current.directSize += directSize
-		for _, childPath := range childDirs {
-			nodes[childPath] = &node{path: childPath, parent: t.path}
-			current.children = append(current.children, childPath)
+		for _, child := range childDirs {
+			if child.excluded {
+				continue
+			}
+			nodes[child.path] = &node{path: child.path, parent: t.parent}
+			current.children = append(current.children, child.path)
 		}
 	}
 	*errs = append(*errs, localErrs...)
 	mu.Unlock()
 
-	for _, childPath := range childDirs {
+	for _, child := range childDirs {
 		wg.Add(1)
-		enqueueTask(tasks, task{path: childPath, parent: t.path})
+		parent := t.parent
+		if !child.excluded {
+			parent = child.path
+		}
+		enqueueTask(tasks, task{path: child.path, parent: parent})
 	}
 }
 
@@ -427,11 +440,21 @@ func percent(size, total int64) float64 {
 }
 
 type excludeMatcher struct {
-	root     string
-	patterns []string
+	root           string
+	patterns       []string
+	ignorePatterns []ignorePattern
 }
 
-func newExcludeMatcher(root string, patterns []string) excludeMatcher {
+type ignorePattern struct {
+	negated   bool
+	directory bool
+	hasSlash  bool
+	anchored  bool
+	absolute  bool
+	re        *regexp.Regexp
+}
+
+func newExcludeMatcher(root string, patterns, ignoreFiles []string) (excludeMatcher, error) {
 	normalized := make([]string, 0, len(patterns))
 	for _, pattern := range patterns {
 		pattern = filepath.ToSlash(strings.TrimSpace(pattern))
@@ -439,10 +462,39 @@ func newExcludeMatcher(root string, patterns []string) excludeMatcher {
 			normalized = append(normalized, pattern)
 		}
 	}
-	return excludeMatcher{root: root, patterns: normalized}
+
+	ignorePatterns := make([]ignorePattern, 0)
+	for _, ignoreFile := range ignoreFiles {
+		patterns, err := loadIgnoreFile(root, ignoreFile)
+		if err != nil {
+			return excludeMatcher{}, err
+		}
+		ignorePatterns = append(ignorePatterns, patterns...)
+	}
+	return excludeMatcher{root: root, patterns: normalized, ignorePatterns: ignorePatterns}, nil
 }
 
-func (m excludeMatcher) excluded(path, name string) bool {
+func (m excludeMatcher) excluded(path, name string, isDir bool) bool {
+	if m.manualExcluded(path, name) {
+		return true
+	}
+	rel, err := filepath.Rel(m.root, path)
+	if err != nil {
+		rel = path
+	}
+	rel = filepath.ToSlash(rel)
+	abs := filepath.ToSlash(path)
+
+	excluded := false
+	for _, pattern := range m.ignorePatterns {
+		if pattern.matches(rel, abs, isDir) {
+			excluded = !pattern.negated
+		}
+	}
+	return excluded
+}
+
+func (m excludeMatcher) manualExcluded(path, name string) bool {
 	if len(m.patterns) == 0 {
 		return false
 	}
@@ -452,13 +504,156 @@ func (m excludeMatcher) excluded(path, name string) bool {
 	}
 	rel = filepath.ToSlash(rel)
 	abs := filepath.ToSlash(path)
-
 	for _, pattern := range m.patterns {
 		if matchGlob(pattern, name) || matchGlob(pattern, rel) || matchGlob(pattern, abs) {
 			return true
 		}
 	}
 	return false
+}
+
+func loadIgnoreFile(root, name string) ([]ignorePattern, error) {
+	contents, err := os.ReadFile(name)
+	if err != nil {
+		return nil, fmt.Errorf("read ignore file %q: %w", name, err)
+	}
+
+	patterns := make([]ignorePattern, 0)
+	for _, line := range strings.Split(strings.ReplaceAll(string(contents), "\r\n", "\n"), "\n") {
+		pattern, ok, err := parseIgnorePattern(root, line)
+		if err != nil {
+			return nil, fmt.Errorf("parse ignore file %q: %w", name, err)
+		}
+		if ok {
+			patterns = append(patterns, pattern)
+		}
+	}
+	return patterns, nil
+}
+
+func parseIgnorePattern(root, line string) (ignorePattern, bool, error) {
+	if line == "" || strings.HasPrefix(line, "#") {
+		return ignorePattern{}, false, nil
+	}
+
+	if strings.HasPrefix(line, "\\#") {
+		line = line[1:]
+	}
+	pattern := ignorePattern{}
+	if strings.HasPrefix(line, "!") {
+		pattern.negated = true
+		line = line[1:]
+	} else if strings.HasPrefix(line, "\\!") {
+		line = line[1:]
+	}
+	if line == "" {
+		return ignorePattern{}, false, nil
+	}
+
+	line = filepath.ToSlash(line)
+	pattern.directory = strings.HasSuffix(line, "/")
+	line = strings.TrimSuffix(line, "/")
+	root = filepath.ToSlash(filepath.Clean(root))
+	if filepath.IsAbs(line) && (line == root || strings.HasPrefix(line, root+"/")) {
+		pattern.absolute = true
+	} else if strings.HasPrefix(line, "/") {
+		pattern.anchored = true
+		line = strings.TrimPrefix(line, "/")
+	}
+	pattern.hasSlash = strings.Contains(line, "/")
+
+	re, err := compileIgnoreGlob(line)
+	if err != nil {
+		return ignorePattern{}, false, err
+	}
+	pattern.re = re
+	return pattern, true, nil
+}
+
+func (p ignorePattern) matches(rel, abs string, isDir bool) bool {
+	target := rel
+	if p.absolute {
+		target = abs
+	}
+	prefixes := pathPrefixes(target)
+	for index, prefix := range prefixes {
+		if p.directory && !isDir && index == 0 {
+			continue
+		}
+		candidate := prefix
+		if !p.hasSlash && !p.anchored {
+			candidate = filepath.ToSlash(filepath.Base(prefix))
+		}
+		if p.re.MatchString(candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func pathPrefixes(path string) []string {
+	path = strings.TrimSuffix(filepath.ToSlash(path), "/")
+	prefixes := make([]string, 0, strings.Count(path, "/")+1)
+	prefixes = append(prefixes, path)
+	for {
+		parent := filepath.ToSlash(filepath.Dir(path))
+		if parent == path || parent == "." || parent == "/" {
+			break
+		}
+		prefixes = append(prefixes, parent)
+		path = parent
+	}
+	return prefixes
+}
+
+func compileIgnoreGlob(pattern string) (*regexp.Regexp, error) {
+	var expression strings.Builder
+	expression.WriteString("^")
+	for i := 0; i < len(pattern); {
+		switch pattern[i] {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				if i+2 < len(pattern) && pattern[i+2] == '/' {
+					expression.WriteString("(?:.*/)?")
+					i += 3
+					continue
+				}
+				expression.WriteString(".*")
+				i += 2
+				continue
+			}
+			expression.WriteString("[^/]*")
+		case '?':
+			expression.WriteString("[^/]")
+		case '[':
+			end := strings.IndexByte(pattern[i+1:], ']')
+			if end < 0 {
+				expression.WriteString("\\[")
+			} else {
+				end += i + 1
+				class := pattern[i+1 : end]
+				if strings.HasPrefix(class, "!") {
+					class = "^" + class[1:]
+				}
+				expression.WriteString("[")
+				expression.WriteString(class)
+				expression.WriteString("]")
+				i = end
+			}
+		case '\\':
+			if i+1 < len(pattern) {
+				i++
+				expression.WriteString(regexp.QuoteMeta(string(pattern[i])))
+			} else {
+				expression.WriteString("\\\\")
+			}
+		default:
+			expression.WriteString(regexp.QuoteMeta(string(pattern[i])))
+		}
+		i++
+	}
+	expression.WriteString("$")
+	return regexp.Compile(expression.String())
 }
 
 func matchGlob(pattern, value string) bool {

@@ -60,6 +60,20 @@ func TestParseArgsAllowsRepeatedExcludesAfterPath(t *testing.T) {
 	}
 }
 
+func TestParseArgsAllowsRepeatedIgnoreFilesAfterPath(t *testing.T) {
+	cfg, err := parseArgs([]string{".", "--ignore-file", "first.ignore", "--ignore-file=second.ignore"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(cfg.ignoreFiles) != 2 {
+		t.Fatalf("len(ignoreFiles) = %d, want 2", len(cfg.ignoreFiles))
+	}
+	if cfg.ignoreFiles[0] != "first.ignore" || cfg.ignoreFiles[1] != "second.ignore" {
+		t.Fatalf("ignoreFiles = %#v, want first.ignore and second.ignore", cfg.ignoreFiles)
+	}
+}
+
 func TestParseArgsAllowsCrossFSAfterPath(t *testing.T) {
 	cfg, err := parseArgs([]string{".", "--cross-fs"})
 	if err != nil {

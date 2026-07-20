@@ -18,6 +18,7 @@ If `path` is omitted, `dsa` scans the current working directory.
 - `--limit N`: maximum number of directories to report. Defaults to `50`.
 - `--size-mode recursive|top-level`: directory aggregation mode. Defaults to `recursive`.
 - `--exclude GLOB`: exclude a path by glob pattern. May be repeated.
+- `--ignore-file PATH`: read root-relative Git-ignore-style rules from a file. May be repeated. Supports comments, `!` reinclusion rules, directory rules, `**`, and absolute paths, so a Restic exclude file can be reused.
 - `--cross-fs`: descend into directories on other filesystems. By default, `dsa` stays on the scanned root's filesystem.
 - `--no-device-check`: skip directory device checks. This can be faster on slow filesystems and may cross filesystem boundaries. Pseudo-filesystems are still excluded.
 - `--regular-files-only`: count only regular file entries. Symlinks and special files are ignored.

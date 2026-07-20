@@ -36,6 +36,7 @@ type cliConfig struct {
 	limit            int
 	sizeMode         string
 	excludes         []string
+	ignoreFiles      []string
 	workers          int
 	stream           bool
 	crossFS          bool
@@ -75,6 +76,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		Limit:            cfg.limit,
 		SizeMode:         mode,
 		ExcludePatterns:  cfg.excludes,
+		IgnoreFiles:      cfg.ignoreFiles,
 		Workers:          cfg.workers,
 		CrossFilesystem:  cfg.crossFS,
 		NoDeviceCheck:    cfg.noDeviceCheck,
@@ -134,6 +136,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 func parseArgs(args []string) (cliConfig, error) {
 	var excludes multiFlag
+	var ignoreFiles multiFlag
 	cfg := cliConfig{
 		format:   "table",
 		limit:    defaultLimit,
@@ -147,6 +150,7 @@ func parseArgs(args []string) (cliConfig, error) {
 	fs.IntVar(&cfg.limit, "limit", cfg.limit, "maximum number of directories to show")
 	fs.StringVar(&cfg.sizeMode, "size-mode", cfg.sizeMode, "directory size mode: recursive or top-level")
 	fs.Var(&excludes, "exclude", "glob pattern to exclude; may be repeated")
+	fs.Var(&ignoreFiles, "ignore-file", "Git-ignore-style file whose matching paths are excluded; may be repeated")
 	fs.BoolVar(&cfg.crossFS, "cross-fs", cfg.crossFS, "descend into directories on other filesystems")
 	fs.BoolVar(&cfg.noDeviceCheck, "no-device-check", cfg.noDeviceCheck, "skip directory device checks; may cross filesystem boundaries")
 	fs.BoolVar(&cfg.regularFilesOnly, "regular-files-only", cfg.regularFilesOnly, "count only regular file entries")
@@ -176,6 +180,7 @@ func parseArgs(args []string) (cliConfig, error) {
 		cfg.path = wd
 	}
 	cfg.excludes = excludes
+	cfg.ignoreFiles = ignoreFiles
 	return cfg, nil
 }
 
@@ -210,7 +215,7 @@ func flagNeedsSeparateValue(arg string) bool {
 		return false
 	}
 	switch name {
-	case "format", "limit", "size-mode", "exclude", "workers":
+	case "format", "limit", "size-mode", "exclude", "ignore-file", "workers":
 		return true
 	default:
 		return false
@@ -228,6 +233,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --size-mode recursive|top-level")
 	fmt.Fprintln(w, "                                directory size aggregation mode (default recursive)")
 	fmt.Fprintln(w, "  --exclude GLOB                exclude paths matching glob; may be repeated")
+	fmt.Fprintln(w, "  --ignore-file PATH            read root-relative Git-ignore-style rules from PATH; may be repeated")
 	fmt.Fprintln(w, "  --cross-fs                    descend into directories on other filesystems")
 	fmt.Fprintln(w, "  --no-device-check             skip directory device checks; may cross filesystem boundaries")
 	fmt.Fprintln(w, "                                pseudo-filesystems are still excluded")
